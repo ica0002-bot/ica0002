@@ -1,2 +1,1 @@
-# ica0002
-Template repo for cloning
+# Resources for IT Infrastructure Services Course
