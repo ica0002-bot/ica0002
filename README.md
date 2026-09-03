@@ -56,7 +56,7 @@ Copy `run-tests.sh` to your repository, make it executable, commit and push to G
 	git commit -m 'Add tests'
 	git push
 
-Note: this will overwrite `ansible.cfg` and `inventory.sh` files in your repository if you have created them already!
+Note: this will overwrite `run-tests.sh` file in your repository if you have created it already!
 
 You're all set! Now you can run `./run-tests.sh` any time to test your solution.
 
