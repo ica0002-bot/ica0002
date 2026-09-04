@@ -1,6 +1,6 @@
 # Resources for IT Infrastructure Services Course
 
-## Add name file
+## Add name.txt file
 
 Create a file called `name.txt` in the root of your repo with this content:
 
@@ -19,7 +19,7 @@ Also wrong:
 
 	real name: Roman Kuchin username: romankuchin
 
-This file is be used in some scripts, and also on the final lab defence (to match your code with your grade in OIS).
+This file is used in some scripts, and also on the final lab defence (to match your solution with your grade in OIS).
 
 
 ## Add inventory script to your repository
