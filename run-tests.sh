@@ -7,6 +7,6 @@ fi
 
 echo "Downloading test cases..."
 curl -s https://raw.githubusercontent.com/ica0002-bot/ica0002/refs/heads/main/test_all.py > test_all.py
-git diff test_all.py
+git --no-pager diff test_all.py
 
 ~/ansible-venv/bin/pytest -rA --tb=no
