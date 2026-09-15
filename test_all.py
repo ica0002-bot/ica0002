@@ -18,18 +18,39 @@ repo = {
 }
 
 web_servers = {
+    'files': [],
     'html_patterns': [],
     'process_sockets': [],
     'services': [],
 }
 
-lab = int(os.environ.get('LAB', 2))
+lab = int(os.environ.get('LAB', 3))
 
 if lab == 2:
+    web_servers['files'].append('/usr/bin/nginx:::')
     web_servers['html_patterns'].append('Welcome to nginx!')  # 2.4
 
 if lab >= 2:
     repo['files'].append('roles/nginx/tasks/main.yaml')  # 2.4
+
+if lab == 3:
+    repo['files'] += [
+        'roles/nginx/files/default',  # 3.5
+        'roles/uwsgi/files/agama.ini',  # 3.3
+    ]
+
+    web_servers['files'].append('/etc/uwsgi/apps-enabled/agama.ini:::')  # 3.3
+
+if lab >= 3:
+    repo['files'].append('roles/agama/tasks/main.yaml')  # 3.2
+
+    web_servers['files'] += [
+      '/etc/nginx/sites-enabled/default:root:root:644',  # 3.5
+      '/opt/agama/agama.py:::',  # 3.2
+    ]
+    web_servers['html_patterns'].append('v0.3 running on')  # 3.5
+    web_servers['process_sockets'].append('uwsgi@tcp://127.0.0.1:5000')  # 3.3
+    web_servers['services'].append('uwsgi')  # 3.4
 
 if 13 >= lab >= 2:
     web_servers['process_sockets'].append('nginx@tcp://0.0.0.0:80')  # 2.4
@@ -115,22 +136,26 @@ def test_local_repo_file_exists(file):
 # Web server tests (labs 2+)
 #
 
-@pytest.mark.parametrize('host', get_hosts('web_servers'))
-@pytest.mark.parametrize('process_socket', sorted(set(web_servers['process_sockets'])))
-def test_web_service_is_listening(host, process_socket):
-    assert_process_is_listening(host, process_socket)
+if lab >= 2:
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    @pytest.mark.parametrize('process_socket', sorted(set(web_servers['process_sockets'])))
+    def test_web_service_is_listening(host, process_socket):
+        assert_process_is_listening(host, process_socket)
 
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    @pytest.mark.parametrize('service', sorted(set(web_servers['services'])))
+    def test_web_service_is_running_and_enabled(host, service):
+        assert_service_is_running_and_enabled(host, service)
 
-@pytest.mark.parametrize('host', get_hosts('web_servers'))
-@pytest.mark.parametrize('service', sorted(set(web_servers['services'])))
-def test_web_service_is_running_and_enabled(host, service):
-    assert_service_is_running_and_enabled(host, service)
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    @pytest.mark.parametrize('file_owner_group_mode', sorted(set(web_servers['files'])))
+    def test_web_server_file_exists(host, file_owner_group_mode):
+        assert_file_exists(host, file_owner_group_mode)
 
-
-@pytest.mark.parametrize('host', get_hosts('web_servers'))
-@pytest.mark.parametrize('content', sorted(set(web_servers['html_patterns'])))
-def test_web_server_html_content(host, content):
-    assert_web_page_has_content(host, 'http://localhost', content)
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    @pytest.mark.parametrize('content', sorted(set(web_servers['html_patterns'])))
+    def test_web_server_html_content(host, content):
+        assert_web_page_has_content(host, 'http://localhost', content)
 
 
 #
