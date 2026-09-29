@@ -17,6 +17,11 @@ repo = {
     'files': ['ansible.cfg', 'infra.yaml', 'roles/init/tasks/main.yaml'],  # 1.6
 }
 
+all_servers = {
+    'addresses_resolvable': [],
+    'services_stopped': [],
+}
+
 db_servers = {
     'files': [],
     'mysql_databases': [],
@@ -25,14 +30,20 @@ db_servers = {
     'services': [],
 }
 
+dns_servers = {
+    'process_sockets': [],
+    'services': [],
+}
+
 web_servers = {
+    'file_patterns_missing': [],
     'files': [],
     'html_patterns': [],
     'process_sockets': [],
     'services': [],
 }
 
-lab = int(os.environ.get('LAB', 4))
+lab = int(os.environ.get('LAB', 5))
 
 if lab == 2:
     web_servers['files'].append('/usr/bin/nginx:::')
@@ -78,6 +89,17 @@ if lab >= 4:
 
 if 11 >= lab >= 4:
     web_servers['files'].append('/etc/uwsgi/apps-enabled/agama.ini:agama::400')  # 4.9
+
+if lab >= 5:
+    repo['files'].append('roles/bind/tasks/main.yaml')  # 5.2
+
+    all_servers['addresses_resolvable'] += ['__my_vms__', 'taltech.ee']  # 5.6
+    all_servers['services_stopped'].append('systemd-resolved')  # 5.6
+
+    dns_servers['process_sockets'].append('named@tcp://__ip__:53')  # 5.2
+    dns_servers['services'].append('bind9')  # 5.2
+
+    web_servers['file_patterns_missing'].append('/etc/uwsgi/apps-enabled/agama.ini:192.168.4')  # 5.7
 
 
 #
@@ -157,6 +179,47 @@ def test_local_repo_file_exists(file):
 
 
 #
+# Any server tests
+#
+
+if lab >= 5:
+    @pytest.mark.parametrize('host', get_hosts('all'))
+    @pytest.mark.parametrize('service', sorted(set(all_servers['services_stopped'])))
+    def test_service_is_stopped_and_disabled(host, service):
+        s = testinfra.get_host(f'ansible://{host}').service(service)
+        assert not s.is_running, f'{service} is still running on {host}'
+        assert not s.is_enabled, f'{service} is still enabled on {host}'
+
+    @pytest.mark.parametrize('host', get_hosts('all'))
+    @pytest.mark.parametrize('addr', sorted(set(all_servers['addresses_resolvable'])))
+    def test_host_is_resolvable(host, addr):
+        h = testinfra.get_host(f'ansible://{host}')
+        if addr == '__my_vms__':
+            addrs = set(get_hosts('all'))
+        else:
+            addrs = [addr]
+
+        for a in addrs:
+            assert h.addr(a).is_resolvable, f'Cannot resolve {a} from {host}'
+
+
+#
+# DNS server tests
+#
+
+if lab >= 5:
+    @pytest.mark.parametrize('host', get_hosts('dns_servers'))
+    @pytest.mark.parametrize('process_socket', sorted(set(dns_servers['process_sockets'])))
+    def test_dns_service_is_listening(host, process_socket):
+        assert_process_is_listening(host, process_socket)
+
+    @pytest.mark.parametrize('host', get_hosts('dns_servers'))
+    @pytest.mark.parametrize('service', sorted(set(dns_servers['services'])))
+    def test_dns_service_is_running_and_enabled(host, service):
+        assert_service_is_running_and_enabled(host, service)
+
+
+#
 # Database server tests
 #
 
@@ -227,6 +290,14 @@ if lab >= 2:
     @pytest.mark.parametrize('content', sorted(set(web_servers['html_patterns'])))
     def test_web_server_html_content(host, content):
         assert_web_page_has_content(host, 'http://localhost', content)
+
+if lab >= 5:
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    @pytest.mark.parametrize('file_pattern', sorted(set(web_servers['file_patterns_missing'])))
+    def test_web_server_file_does_not_contain(host, file_pattern):
+        file, pattern = file_pattern.split(':')
+        f = testinfra.get_host(f'ansible://{host}').file(file)
+        assert not f.contains(pattern), f'{f} still contains {pattern}'
 
 
 #
