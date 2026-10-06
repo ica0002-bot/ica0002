@@ -120,6 +120,7 @@ if lab >= 6:
     all_servers['services'].append('prometheus-node-exporter')  # 6.1
 
     prometheus_servers['file_patterns_missing'].append('/etc/prometheus/prometheus.yml:192.168.4')  # 6.2
+    prometheus_servers['file_patterns_missing'].append('/etc/default/prometheus:127.0.0')  # 6.2
     prometheus_servers['html_patterns'] += [
       'prometheus_ready 1',  # 6.3, 6.4
       'prometheus_target_scrape_pool_targets{scrape_job="node"} 2',  # 6.2, 6.4
