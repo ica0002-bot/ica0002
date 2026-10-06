@@ -19,6 +19,8 @@ repo = {
 
 all_servers = {
     'addresses_resolvable': [],
+    'process_sockets': [],
+    'services': [],
     'services_stopped': [],
 }
 
@@ -35,6 +37,13 @@ dns_servers = {
     'services': [],
 }
 
+prometheus_servers = {
+    'file_patterns_missing': [],
+    'html_patterns': [],
+    'process_sockets': [],
+    'services': [],
+}
+
 web_servers = {
     'file_patterns_missing': [],
     'files': [],
@@ -43,7 +52,7 @@ web_servers = {
     'services': [],
 }
 
-lab = int(os.environ.get('LAB', 5))
+lab = int(os.environ.get('LAB', 6))
 
 if lab == 2:
     web_servers['files'].append('/usr/bin/nginx:::')
@@ -101,10 +110,34 @@ if lab >= 5:
 
     web_servers['file_patterns_missing'].append('/etc/uwsgi/apps-enabled/agama.ini:192.168.4')  # 5.7
 
+if lab >= 6:
+    repo['files'] += [
+      'docs/prom_queries.txt',  # 6.5
+      'roles/prometheus/tasks/main.yaml',  # 6.2
+    ]
+
+    all_servers['process_sockets'].append('prometheus-node-exporter@tcp://0.0.0.0:9100')  # 6.1
+    all_servers['services'].append('prometheus-node-exporter')  # 6.1
+
+    prometheus_servers['file_patterns_missing'].append('/etc/prometheus/prometheus.yml:192.168.4')  # 6.2
+    prometheus_servers['file_patterns_missing'].append('/etc/default/prometheus:127.0.0')  # 6.2
+    prometheus_servers['html_patterns'] += [
+      'prometheus_ready 1',  # 6.3, 6.4
+      'prometheus_target_scrape_pool_targets{scrape_job="node"} 2',  # 6.2, 6.4
+    ]
+    prometheus_servers['process_sockets'].append('prometheus@tcp://127.0.0.1:9090')  # 6.2
+    prometheus_servers['services'].append('prometheus')  # 6.2
+
 
 #
 # Helper functions
 #
+
+def assert_file_does_not_contain(host, file_pattern):
+    file, pattern = file_pattern.split(':')
+    f = testinfra.get_host(f'ansible://{host}').file(file)
+    assert not f.contains(pattern), f'{f} contains {pattern}'
+
 
 def assert_file_exists(host, file_owner_group_mode):
     file, owner, group, mode = file_owner_group_mode.split(':')
@@ -182,6 +215,17 @@ def test_local_repo_file_exists(file):
 # Any server tests
 #
 
+if lab >= 6:
+    @pytest.mark.parametrize('host', get_hosts('all'))
+    @pytest.mark.parametrize('service', sorted(set(all_servers['services'])))
+    def test_service_is_running_and_enabled(host, service):
+        assert_service_is_running_and_enabled(host, service)
+
+    @pytest.mark.parametrize('host', get_hosts('all'))
+    @pytest.mark.parametrize('process_socket', sorted(set(all_servers['process_sockets'])))
+    def test_service_is_listening(host, process_socket):
+        assert_process_is_listening(host, process_socket)
+
 if lab >= 5:
     @pytest.mark.parametrize('host', get_hosts('all'))
     @pytest.mark.parametrize('service', sorted(set(all_servers['services_stopped'])))
@@ -209,14 +253,40 @@ if lab >= 5:
 
 if lab >= 5:
     @pytest.mark.parametrize('host', get_hosts('dns_servers'))
+    @pytest.mark.parametrize('service', sorted(set(dns_servers['services'])))
+    def test_dns_service_is_running_and_enabled(host, service):
+        assert_service_is_running_and_enabled(host, service)
+
+    @pytest.mark.parametrize('host', get_hosts('dns_servers'))
     @pytest.mark.parametrize('process_socket', sorted(set(dns_servers['process_sockets'])))
     def test_dns_service_is_listening(host, process_socket):
         assert_process_is_listening(host, process_socket)
 
-    @pytest.mark.parametrize('host', get_hosts('dns_servers'))
-    @pytest.mark.parametrize('service', sorted(set(dns_servers['services'])))
-    def test_dns_service_is_running_and_enabled(host, service):
+
+#
+# Prometheus server tests
+#
+
+if lab >= 6:
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
+    @pytest.mark.parametrize('file_pattern', sorted(set(prometheus_servers['file_patterns_missing'])))
+    def test_prometheus_server_file_does_not_contain(host, file_pattern):
+        assert_file_does_not_contain(host, file_pattern)
+
+    @pytest.mark.parametrize('host', get_hosts('prometheus') + get_hosts('prometheus_servers'))
+    @pytest.mark.parametrize('service', sorted(set(prometheus_servers['services'])))
+    def test_prometheus_is_running_and_enabled(host, service):
         assert_service_is_running_and_enabled(host, service)
+
+    @pytest.mark.parametrize('host', get_hosts('prometheus') + get_hosts('prometheus_servers'))
+    @pytest.mark.parametrize('process_socket', sorted(set(prometheus_servers['process_sockets'])))
+    def test_prometheus_is_listening(host, process_socket):
+        assert_process_is_listening(host, process_socket)
+
+    @pytest.mark.parametrize('host', get_hosts('prometheus') + get_hosts('prometheus_servers'))
+    @pytest.mark.parametrize('content', sorted(set(prometheus_servers['html_patterns'])))
+    def test_prometheus_html_content(host, content):
+        assert_web_page_has_content(host, 'http://localhost/prometheus/metrics', content)
 
 
 #
@@ -230,14 +300,14 @@ if lab >= 4:
         assert_file_exists(host, file_owner_group_mode)
 
     @pytest.mark.parametrize('host', get_hosts('db_servers'))
-    @pytest.mark.parametrize('process_socket', sorted(set(db_servers['process_sockets'])))
-    def test_db_service_is_listening(host, process_socket):
-        assert_process_is_listening(host, process_socket)
-
-    @pytest.mark.parametrize('host', get_hosts('db_servers'))
     @pytest.mark.parametrize('service', sorted(set(db_servers['services'])))
     def test_db_service_is_running_and_enabled(host, service):
         assert_service_is_running_and_enabled(host, service)
+
+    @pytest.mark.parametrize('host', get_hosts('db_servers'))
+    @pytest.mark.parametrize('process_socket', sorted(set(db_servers['process_sockets'])))
+    def test_db_service_is_listening(host, process_socket):
+        assert_process_is_listening(host, process_socket)
 
     @pytest.mark.parametrize('host', get_hosts('db_servers'))
     @pytest.mark.parametrize('database', sorted(set(db_servers['mysql_databases'])))
@@ -277,14 +347,14 @@ if lab >= 2:
         assert_file_exists(host, file_owner_group_mode)
 
     @pytest.mark.parametrize('host', get_hosts('web_servers'))
-    @pytest.mark.parametrize('process_socket', sorted(set(web_servers['process_sockets'])))
-    def test_web_service_is_listening(host, process_socket):
-        assert_process_is_listening(host, process_socket)
-
-    @pytest.mark.parametrize('host', get_hosts('web_servers'))
     @pytest.mark.parametrize('service', sorted(set(web_servers['services'])))
     def test_web_service_is_running_and_enabled(host, service):
         assert_service_is_running_and_enabled(host, service)
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    @pytest.mark.parametrize('process_socket', sorted(set(web_servers['process_sockets'])))
+    def test_web_service_is_listening(host, process_socket):
+        assert_process_is_listening(host, process_socket)
 
     @pytest.mark.parametrize('host', get_hosts('web_servers'))
     @pytest.mark.parametrize('content', sorted(set(web_servers['html_patterns'])))
@@ -295,9 +365,7 @@ if lab >= 5:
     @pytest.mark.parametrize('host', get_hosts('web_servers'))
     @pytest.mark.parametrize('file_pattern', sorted(set(web_servers['file_patterns_missing'])))
     def test_web_server_file_does_not_contain(host, file_pattern):
-        file, pattern = file_pattern.split(':')
-        f = testinfra.get_host(f'ansible://{host}').file(file)
-        assert not f.contains(pattern), f'{f} still contains {pattern}'
+        assert_file_does_not_contain(host, file_pattern)
 
 
 #
