@@ -26,20 +26,31 @@ all_servers = {
 
 db_servers = {
     'files': [],
+    'mysql_metrics': [],
     'mysql_databases': [],
     'mysql_users': [],
+    'mysql_users_forbidden': [],
     'process_sockets': [],
     'services': [],
 }
 
 dns_servers = {
+    'bind_metrics': [],
+    'process_sockets': [],
+    'services': [],
+}
+
+grafana_servers = {
+    'files': [],
+    'html_patterns': [],
     'process_sockets': [],
     'services': [],
 }
 
 prometheus_servers = {
     'file_patterns_missing': [],
-    'html_patterns': [],
+    'nginx_metrics': [],
+    'prometheus_metrics': [],
     'process_sockets': [],
     'services': [],
 }
@@ -48,11 +59,12 @@ web_servers = {
     'file_patterns_missing': [],
     'files': [],
     'html_patterns': [],
+    'nginx_metrics': [],
     'process_sockets': [],
     'services': [],
 }
 
-lab = int(os.environ.get('LAB', 6))
+lab = int(os.environ.get('LAB', 7))
 
 if lab == 2:
     web_servers['files'].append('/usr/bin/nginx:::')
@@ -60,6 +72,10 @@ if lab == 2:
 
 if lab >= 2:
     repo['files'].append('roles/nginx/tasks/main.yaml')  # 2.4
+
+if 13 >= lab >= 2:
+    web_servers['process_sockets'].append('nginx@tcp://0.0.0.0:80')  # 2.4
+    web_servers['services'].append('nginx')  # 2.4
 
 if lab == 3:
     repo['files'] += [
@@ -77,12 +93,12 @@ if lab >= 3:
         '/opt/agama/agama.py:::',  # 3.2
     ]
     web_servers['html_patterns'].append('v0.3 running on')  # 3.5
+
+if 11 >= lab >= 3:
+    repo['files'].append('roles/uwsgi/tasks/main.yaml')  # 3.3
+
     web_servers['process_sockets'].append('uwsgi@tcp://127.0.0.1:5000')  # 3.3
     web_servers['services'].append('uwsgi')  # 3.4
-
-if 13 >= lab >= 2:
-    web_servers['process_sockets'].append('nginx@tcp://0.0.0.0:80')  # 2.4
-    web_servers['services'].append('nginx')  # 2.4
 
 if lab >= 4:
     repo['files'] += [
@@ -112,21 +128,77 @@ if lab >= 5:
 
 if lab >= 6:
     repo['files'] += [
-      'docs/prom_queries.txt',  # 6.5
-      'roles/prometheus/tasks/main.yaml',  # 6.2
+        'docs/prom_queries.txt',  # 6.5
+        'roles/prometheus/tasks/main.yaml',  # 6.2
     ]
 
     all_servers['process_sockets'].append('prometheus-node-exporter@tcp://0.0.0.0:9100')  # 6.1
     all_servers['services'].append('prometheus-node-exporter')  # 6.1
 
-    prometheus_servers['file_patterns_missing'].append('/etc/prometheus/prometheus.yml:192.168.4')  # 6.2
-    prometheus_servers['file_patterns_missing'].append('/etc/default/prometheus:127.0.0')  # 6.2
-    prometheus_servers['html_patterns'] += [
-      'prometheus_ready 1',  # 6.3, 6.4
-      'prometheus_target_scrape_pool_targets{scrape_job="node"} 2',  # 6.2, 6.4
+    prometheus_servers['file_patterns_missing'] += [
+        '/etc/default/prometheus:127.0.0',  # 6.2
+        '/etc/prometheus/prometheus.yml:192.168.4',  # 6.2
     ]
-    prometheus_servers['process_sockets'].append('prometheus@tcp://127.0.0.1:9090')  # 6.2
-    prometheus_servers['services'].append('prometheus')  # 6.2
+    prometheus_servers['prometheus_metrics'] += [
+        'prometheus_ready 1',  # 6.3, 6.4
+        'prometheus_target_scrape_pool_targets{scrape_job="node"} 2',  # 6.2, 6.4
+    ]
+    prometheus_servers['process_sockets'] += [
+        'nginx@tcp://0.0.0.0:80',  # 6.3
+        'prometheus@tcp://127.0.0.1:9090',  # 6.2
+    ]
+    prometheus_servers['services'] += [
+        'nginx',  # 6.3
+        'prometheus',  # 6.2
+    ]
+
+if lab >= 7:
+    repo['files'] += [
+        'roles/grafana/files/main.json',  # 7.7
+        'roles/grafana/tasks/main.yaml',  # 7.4
+    ]
+
+    db_servers['files'].append('/var/lib/prometheus/.my.cnf:prometheus::400')  # 7.1
+    db_servers['mysql_metrics'].append('mysql_up 1')  # 7.1
+    db_servers['mysql_users'].append('exporter@localhost')  # 7.1
+    db_servers['mysql_users_forbidden'].append('exporter@%')  # 7.1
+    db_servers['process_sockets'].append('prometheus-mysqld-exporter@tcp://0.0.0.0:9104')  # 7.1
+    db_servers['services'].append('prometheus-mysqld-exporter')  # 7.1
+
+    dns_servers['bind_metrics'].append('bind_up 1')  # 7.2
+    dns_servers['process_sockets'] += [
+        'named@tcp://127.0.0.1:8053',  # 7.2
+        'prometheus-bind-exporter@tcp://0.0.0.0:9119',  # 7.2
+    ]
+    dns_servers['services'].append('prometheus-bind-exporter')  # 7.2
+
+    grafana_servers['html_patterns'].append('<title>Grafana')  # 7.5
+
+    prometheus_servers['nginx_metrics'].append('nginx_up 1')  # 7.3
+    prometheus_servers['prometheus_metrics'] += [
+        'prometheus_target_scrape_pool_targets{scrape_job="bind"} 1',  # 7.2
+        'prometheus_target_scrape_pool_targets{scrape_job="mysql"} 1',  # 7.1
+        'prometheus_target_scrape_pool_targets{scrape_job="promtail"} 2',  # 7.3
+    ]
+    prometheus_servers['process_sockets'] += [
+        'nginx@tcp://127.0.0.1:8080',  # 7.3
+        'prometheus-nginx-exporter@tcp://0.0.0.0:9113',  # 7.3
+    ]
+    prometheus_servers['services'].append('prometheus-nginx-exporter')  # 7.3
+
+if 11 >= lab >= 7:
+    grafana_servers['files'].append('/etc/grafana/grafana.ini:root:grafana:640')  # 7.4
+    # Need to use 127.0.0.1 in the Grafana configuration to bind to local interface
+    grafana_servers['process_sockets'].append('grafana-server@tcp://0.0.0.0:3000')  # 7.4
+    grafana_servers['services'].append('grafana-server')  # 7.4
+
+if 13 >= lab >= 7:
+    web_servers['nginx_metrics'].append('nginx_up 1')  # 7.3
+    web_servers['process_sockets'] += [
+        'nginx@tcp://127.0.0.1:8080',  # 7.3
+        'prometheus-nginx-exporter@tcp://0.0.0.0:9113',  # 7.3
+    ]
+    web_servers['services'].append('prometheus-nginx-exporter')  # 7.3
 
 
 #
@@ -162,6 +234,10 @@ def assert_process_is_listening(host, process_socket):
         ip_addr = h.interface('ens3').addresses[0]
         socket = socket.replace('__ip__', ip_addr)
     assert h.socket(socket).is_listening, f'{process} is not listening on {host} socket {socket}'
+    if '127.0.0.1' in socket:
+        # If checking for local interface, also ensure the process is not listening on the public one
+        socket = socket.replace('127.0.0.1', '0.0.0.0')
+        assert not h.socket(socket).is_listening, f'{process} is still listening on {host} socket {socket}'
 
 
 def assert_service_is_running_and_enabled(host, service):
@@ -262,6 +338,12 @@ if lab >= 5:
     def test_dns_service_is_listening(host, process_socket):
         assert_process_is_listening(host, process_socket)
 
+if lab >= 7:
+    @pytest.mark.parametrize('host', get_hosts('dns_servers'))
+    @pytest.mark.parametrize('metric', sorted(set(dns_servers['bind_metrics'])))
+    def test_bind_metric_exposed(host, metric):
+        assert_web_page_has_content(host, 'http://localhost:9119/metrics', metric)
+
 
 #
 # Prometheus server tests
@@ -273,20 +355,52 @@ if lab >= 6:
     def test_prometheus_server_file_does_not_contain(host, file_pattern):
         assert_file_does_not_contain(host, file_pattern)
 
-    @pytest.mark.parametrize('host', get_hosts('prometheus') + get_hosts('prometheus_servers'))
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
     @pytest.mark.parametrize('service', sorted(set(prometheus_servers['services'])))
-    def test_prometheus_is_running_and_enabled(host, service):
+    def test_prometheus_sevice_is_running_and_enabled(host, service):
         assert_service_is_running_and_enabled(host, service)
 
-    @pytest.mark.parametrize('host', get_hosts('prometheus') + get_hosts('prometheus_servers'))
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
     @pytest.mark.parametrize('process_socket', sorted(set(prometheus_servers['process_sockets'])))
-    def test_prometheus_is_listening(host, process_socket):
+    def test_prometheus_service_is_listening(host, process_socket):
         assert_process_is_listening(host, process_socket)
 
-    @pytest.mark.parametrize('host', get_hosts('prometheus') + get_hosts('prometheus_servers'))
-    @pytest.mark.parametrize('content', sorted(set(prometheus_servers['html_patterns'])))
-    def test_prometheus_html_content(host, content):
-        assert_web_page_has_content(host, 'http://localhost/prometheus/metrics', content)
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
+    @pytest.mark.parametrize('metric', sorted(set(prometheus_servers['prometheus_metrics'])))
+    def test_prometheus_metric_exposed(host, metric):
+        assert_web_page_has_content(host, 'http://localhost/prometheus/metrics', metric)
+
+if lab >= 7:
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
+    @pytest.mark.parametrize('metric', sorted(set(prometheus_servers['nginx_metrics'])))
+    def test_prometheus_server_nginx_metric_exposed(host, metric):
+        assert_web_page_has_content(host, 'http://localhost:9113/metrics', metric)
+
+
+#
+# Grafana server tests
+#
+
+if lab >= 7:
+    @pytest.mark.parametrize('host', get_hosts('grafana') + get_hosts('grafana_servers'))
+    @pytest.mark.parametrize('file_owner_group_mode', sorted(set(grafana_servers['files'])))
+    def test_grafana_file_exists(host, file_owner_group_mode):
+        assert_file_exists(host, file_owner_group_mode)
+
+    @pytest.mark.parametrize('host', get_hosts('grafana_servers'))
+    @pytest.mark.parametrize('service', sorted(set(grafana_servers['services'])))
+    def test_grafana_is_running_and_enabled(host, service):
+        assert_service_is_running_and_enabled(host, service)
+
+    @pytest.mark.parametrize('host', get_hosts('grafana_servers'))
+    @pytest.mark.parametrize('process_socket', sorted(set(grafana_servers['process_sockets'])))
+    def test_grafana_is_listening(host, process_socket):
+        assert_process_is_listening(host, process_socket)
+
+    @pytest.mark.parametrize('host', get_hosts('grafana') + get_hosts('grafana_servers'))
+    @pytest.mark.parametrize('content', sorted(set(grafana_servers['html_patterns'])))
+    def test_grafana_html_content(host, content):
+        assert_web_page_has_content(host, 'http://localhost/grafana', content)
 
 
 #
@@ -326,6 +440,7 @@ if lab >= 4:
 
         expected_user_grants = {
             'agama@%': 'ALL PRIVILEGES ON `agama`.*',  # 4.7
+            'exporter@localhost': 'SELECT, PROCESS, REPLICATION CLIENT ON *.*',  # 7.1
         }
 
         r = h.run("sudo mysql -Nse 'SHOW GRANTS FOR %s'" % user.replace('%', '`%`'))
@@ -334,6 +449,12 @@ if lab >= 4:
             f'MySQL user grants are wrong: {grant_str},',
             f"expected: {expected_user_grants[user]}",
         ])
+
+if lab >= 7:
+    @pytest.mark.parametrize('host', get_hosts('db_servers'))
+    @pytest.mark.parametrize('metric', sorted(set(db_servers['mysql_metrics'])))
+    def test_mysql_metric_exposed(host, metric):
+        assert_web_page_has_content(host, 'http://localhost:9104/metrics', metric)
 
 
 #
@@ -366,6 +487,12 @@ if lab >= 5:
     @pytest.mark.parametrize('file_pattern', sorted(set(web_servers['file_patterns_missing'])))
     def test_web_server_file_does_not_contain(host, file_pattern):
         assert_file_does_not_contain(host, file_pattern)
+
+if lab >= 7:
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    @pytest.mark.parametrize('metric', sorted(set(web_servers['nginx_metrics'])))
+    def test_web_server_nginx_metric_exposed(host, metric):
+        assert_web_page_has_content(host, 'http://localhost:9113/metrics', metric)
 
 
 #
