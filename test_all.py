@@ -178,7 +178,7 @@ if lab >= 7:
     prometheus_servers['prometheus_metrics'] += [
         'prometheus_target_scrape_pool_targets{scrape_job="bind"} 1',  # 7.2
         'prometheus_target_scrape_pool_targets{scrape_job="mysql"} 1',  # 7.1
-        'prometheus_target_scrape_pool_targets{scrape_job="promtail"} 2',  # 7.3
+        'prometheus_target_scrape_pool_targets{scrape_job="nginx"} 2',  # 7.3
     ]
     prometheus_servers['process_sockets'] += [
         'nginx@tcp://127.0.0.1:8080',  # 7.3
