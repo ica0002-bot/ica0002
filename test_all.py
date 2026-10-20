@@ -19,9 +19,11 @@ repo = {
 
 all_servers = {
     'addresses_resolvable': [],
+    'file_patterns_missing': [],
     'process_sockets': [],
     'services': [],
     'services_stopped': [],
+    'users': [],
 }
 
 db_servers = {
@@ -64,7 +66,7 @@ web_servers = {
     'services': [],
 }
 
-lab = int(os.environ.get('LAB', 7))
+lab = int(os.environ.get('LAB', 8))
 
 if lab == 2:
     web_servers['files'].append('/usr/bin/nginx:::')
@@ -200,6 +202,22 @@ if 13 >= lab >= 7:
     ]
     web_servers['services'].append('prometheus-nginx-exporter')  # 7.3
 
+if lab >= 8:
+    repo['files'] += [
+        'roles/loki/tasks/main.yaml',  # 8.1
+    ]
+
+    all_servers['file_patterns_missing'].append('/etc/promtail/config.yml:192.168.4')  # 8.2 (implicit)
+    all_servers['users'].append('promtail:adm')  # 8.2
+
+    prometheus_servers['prometheus_metrics'] += [
+        'prometheus_target_scrape_pool_targets{scrape_job="loki"} 1',  # 8.4
+        'prometheus_target_scrape_pool_targets{scrape_job="promtail"} 2',  # 8.4
+    ]
+
+if 11 >= lab >= 8:
+    web_servers['files'].append('/var/log/uwsgi/app/agama.log:root:adm:640')  # 8.3
+
 
 #
 # Helper functions
@@ -245,6 +263,16 @@ def assert_service_is_running_and_enabled(host, service):
     assert s.exists, f'{service} is not installed on {host}'
     assert s.is_running, f'{service} is not running on {host}'
     assert s.is_enabled, f'{service} is not enabled on {host}'
+
+
+def assert_user_exists(host, user_groups):
+    user, groups_cs = user_groups.split(':')
+    groups = groups_cs.split(',') if groups_cs else []
+    u = testinfra.get_host(f'ansible://{host}').user(user)
+    assert u.exists, f'User {user} does not exist on {host}'
+    if groups:
+        for group in groups:
+            assert group in u.groups, f'User {user} is not a member of group {group} on {host}'
 
 
 def assert_web_page_has_content(host, url, content):
@@ -301,6 +329,20 @@ if lab >= 6:
     @pytest.mark.parametrize('process_socket', sorted(set(all_servers['process_sockets'])))
     def test_service_is_listening(host, process_socket):
         assert_process_is_listening(host, process_socket)
+
+if lab >= 8:
+    @pytest.mark.parametrize('host', get_hosts('all'))
+    def test_promtail_is_running_and_enabled(host):
+        assert_service_is_running_and_enabled(host, 'promtail')  # 8.2
+
+    @pytest.mark.parametrize('host', get_hosts('all'))
+    def test_promtail_is_listening(host):
+        assert_process_is_listening(host, 'promtail@tcp://0.0.0.0:9080')  # 8.2
+
+    @pytest.mark.parametrize('host', get_hosts('all'))
+    @pytest.mark.parametrize('user_groups', sorted(set(all_servers['users'])))
+    def test_user_exists(host, user_groups):
+        assert_user_exists(host, user_groups)
 
 if lab >= 5:
     @pytest.mark.parametrize('host', get_hosts('all'))
@@ -378,11 +420,29 @@ if lab >= 7:
 
 
 #
+# Loki server tests
+#
+
+if lab >= 8:
+    @pytest.mark.parametrize('host', get_hosts('loki_servers'))
+    def test_loki_is_running_and_enabled(host):
+        assert_service_is_running_and_enabled(host, 'loki')  # 8.1
+
+    @pytest.mark.parametrize('host', get_hosts('loki_servers'))
+    def test_loki_is_listening(host):
+        assert_process_is_listening(host, 'loki@tcp://0.0.0.0:3100')  # 8.1
+
+    @pytest.mark.parametrize('host', get_hosts('loki_servers'))
+    def test_loki_html_content(host):
+        assert_web_page_has_content(host, 'http://localhost:3100/ready', 'ready')  # 8.1
+
+
+#
 # Grafana server tests
 #
 
 if lab >= 7:
-    @pytest.mark.parametrize('host', get_hosts('grafana') + get_hosts('grafana_servers'))
+    @pytest.mark.parametrize('host', get_hosts('grafana_servers'))
     @pytest.mark.parametrize('file_owner_group_mode', sorted(set(grafana_servers['files'])))
     def test_grafana_file_exists(host, file_owner_group_mode):
         assert_file_exists(host, file_owner_group_mode)
@@ -397,7 +457,7 @@ if lab >= 7:
     def test_grafana_is_listening(host, process_socket):
         assert_process_is_listening(host, process_socket)
 
-    @pytest.mark.parametrize('host', get_hosts('grafana') + get_hosts('grafana_servers'))
+    @pytest.mark.parametrize('host', get_hosts('grafana_servers'))
     @pytest.mark.parametrize('content', sorted(set(grafana_servers['html_patterns'])))
     def test_grafana_html_content(host, content):
         assert_web_page_has_content(host, 'http://localhost/grafana', content)
