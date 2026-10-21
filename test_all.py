@@ -207,12 +207,12 @@ if lab >= 8:
         'roles/loki/tasks/main.yaml',  # 8.1
     ]
 
-    all_servers['file_patterns_missing'].append('/etc/promtail/config.yml:192.168.4')  # 8.2 (implicit)
-    all_servers['users'].append('promtail:adm')  # 8.2
+    all_servers['file_patterns_missing'].append('/etc/alloy/config.alloy:192.168.4')  # 8.2 (implicit)
+    all_servers['users'].append('alloy:adm')  # 8.2
 
     prometheus_servers['prometheus_metrics'] += [
         'prometheus_target_scrape_pool_targets{scrape_job="loki"} 1',  # 8.4
-        'prometheus_target_scrape_pool_targets{scrape_job="promtail"} 2',  # 8.4
+        'prometheus_target_scrape_pool_targets{scrape_job="alloy"} 2',  # 8.4
     ]
 
 if 11 >= lab >= 8:
@@ -332,12 +332,12 @@ if lab >= 6:
 
 if lab >= 8:
     @pytest.mark.parametrize('host', get_hosts('all'))
-    def test_promtail_is_running_and_enabled(host):
-        assert_service_is_running_and_enabled(host, 'promtail')  # 8.2
+    def test_alloy_is_running_and_enabled(host):
+        assert_service_is_running_and_enabled(host, 'alloy')  # 8.2
 
     @pytest.mark.parametrize('host', get_hosts('all'))
-    def test_promtail_is_listening(host):
-        assert_process_is_listening(host, 'promtail@tcp://0.0.0.0:9080')  # 8.2
+    def test_alloy_is_listening(host):
+        assert_process_is_listening(host, 'alloy@tcp://0.0.0.0:12345')  # 8.2
 
     @pytest.mark.parametrize('host', get_hosts('all'))
     @pytest.mark.parametrize('user_groups', sorted(set(all_servers['users'])))
