@@ -28,7 +28,7 @@ all_servers = {
     ],
     'file_patterns_missing': [],
     'files': [
-      '/home/backup/.ssh/id_rsa.pub',  # 9.2
+      '/home/backup/.ssh/id_rsa.pub:::',  # 9.2
       '/home/backup/.ssh/known_hosts:backup:backup:644',  # 9.3
     ],
     'process_sockets': [],
