@@ -14,12 +14,23 @@ import testinfra
 #
 
 repo = {
-    'files': ['ansible.cfg', 'infra.yaml', 'roles/init/tasks/main.yaml'],  # 1.6
+    'files': [
+        'ansible.cfg',  # 1.6
+        'infra.yaml',  # 1.6
+        'roles/init/tasks/main.yaml',  # 1.6
+    ],
 }
 
 all_servers = {
-    'addresses_resolvable': [],
+    'addresses_resolvable': [
+        '__my_vms__',  # 5.6
+        'taltech.ee',  # 5.6
+    ],
     'file_patterns_missing': [],
+    'files': [
+      '/home/backup/.ssh/id_rsa.pub',  # 9.2
+      '/home/backup/.ssh/known_hosts:backup:backup:644',  # 9.3
+    ],
     'process_sockets': [],
     'services': [],
     'services_stopped': [],
@@ -44,9 +55,6 @@ dns_servers = {
 
 grafana_servers = {
     'files': [],
-    'html_patterns': [],
-    'process_sockets': [],
-    'services': [],
 }
 
 prometheus_servers = {
@@ -66,7 +74,7 @@ web_servers = {
     'services': [],
 }
 
-lab = int(os.environ.get('LAB', 8))
+lab = int(os.environ.get('LAB', 9))
 
 if lab == 2:
     web_servers['files'].append('/usr/bin/nginx:::')
@@ -120,7 +128,6 @@ if 11 >= lab >= 4:
 if lab >= 5:
     repo['files'].append('roles/bind/tasks/main.yaml')  # 5.2
 
-    all_servers['addresses_resolvable'] += ['__my_vms__', 'taltech.ee']  # 5.6
     all_servers['services_stopped'].append('systemd-resolved')  # 5.6
 
     dns_servers['process_sockets'].append('named@tcp://__ip__:53')  # 5.2
@@ -174,8 +181,6 @@ if lab >= 7:
     ]
     dns_servers['services'].append('prometheus-bind-exporter')  # 7.2
 
-    grafana_servers['html_patterns'].append('<title>Grafana')  # 7.5
-
     prometheus_servers['nginx_metrics'].append('nginx_up 1')  # 7.3
     prometheus_servers['prometheus_metrics'] += [
         'prometheus_target_scrape_pool_targets{scrape_job="bind"} 1',  # 7.2
@@ -190,9 +195,6 @@ if lab >= 7:
 
 if 11 >= lab >= 7:
     grafana_servers['files'].append('/etc/grafana/grafana.ini:root:grafana:640')  # 7.4
-    # Need to use 127.0.0.1 in the Grafana configuration to bind to local interface
-    grafana_servers['process_sockets'].append('grafana-server@tcp://0.0.0.0:3000')  # 7.4
-    grafana_servers['services'].append('grafana-server')  # 7.4
 
 if 13 >= lab >= 7:
     web_servers['nginx_metrics'].append('nginx_up 1')  # 7.3
@@ -204,6 +206,7 @@ if 13 >= lab >= 7:
 
 if lab >= 8:
     repo['files'] += [
+        'docs/slo.md',  # 8.5
         'roles/loki/tasks/main.yaml',  # 8.1
     ]
 
@@ -217,6 +220,12 @@ if lab >= 8:
 
 if 11 >= lab >= 8:
     web_servers['files'].append('/var/log/uwsgi/app/agama.log:root:adm:640')  # 8.3
+
+if lab >= 9:
+    repo['files'].append('docs/backup_sla.md')  # 9.5
+
+    all_servers['addresses_resolvable'].append('backup')  # 9.1
+    all_servers['users'].append('backup:')  # 9.2
 
 
 #
@@ -318,6 +327,12 @@ def test_local_repo_file_exists(file):
 #
 # Any server tests
 #
+
+if lab >= 9:
+    @pytest.mark.parametrize('host', get_hosts('all'))
+    @pytest.mark.parametrize('file_owner_group_mode', sorted(set(all_servers['files'])))
+    def test_file_exists(host, file_owner_group_mode):
+        assert_file_exists(host, file_owner_group_mode)
 
 if lab >= 6:
     @pytest.mark.parametrize('host', get_hosts('all'))
@@ -448,19 +463,17 @@ if lab >= 7:
         assert_file_exists(host, file_owner_group_mode)
 
     @pytest.mark.parametrize('host', get_hosts('grafana_servers'))
-    @pytest.mark.parametrize('service', sorted(set(grafana_servers['services'])))
-    def test_grafana_is_running_and_enabled(host, service):
-        assert_service_is_running_and_enabled(host, service)
+    def test_grafana_is_running_and_enabled(host):
+        assert_service_is_running_and_enabled(host, 'grafana-server')  # 7.4
 
     @pytest.mark.parametrize('host', get_hosts('grafana_servers'))
-    @pytest.mark.parametrize('process_socket', sorted(set(grafana_servers['process_sockets'])))
-    def test_grafana_is_listening(host, process_socket):
-        assert_process_is_listening(host, process_socket)
+    def test_grafana_is_listening(host):
+        # Need to use 127.0.0.1 in the Grafana configuration to bind to local interface
+        assert_process_is_listening(host, 'grafana-server@tcp://0.0.0.0:3000')  # 7.4
 
     @pytest.mark.parametrize('host', get_hosts('grafana_servers'))
-    @pytest.mark.parametrize('content', sorted(set(grafana_servers['html_patterns'])))
-    def test_grafana_html_content(host, content):
-        assert_web_page_has_content(host, 'http://localhost/grafana', content)
+    def test_grafana_html_content(host):
+        assert_web_page_has_content(host, 'http://localhost/grafana', '<title>Grafana')  # 7.5
 
 
 #
