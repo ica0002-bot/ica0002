@@ -40,9 +40,6 @@ all_servers = {
 db_servers = {
     'files': [],
     'mysql_metrics': [],
-    'mysql_databases': [],
-    'mysql_users': [],
-    'mysql_users_forbidden': [],
     'process_sockets': [],
     'services': [],
 }
@@ -60,7 +57,6 @@ grafana_servers = {
 prometheus_servers = {
     'file_patterns_missing': [],
     'nginx_metrics': [],
-    'prometheus_metrics': [],
     'process_sockets': [],
     'services': [],
 }
@@ -74,7 +70,7 @@ web_servers = {
     'services': [],
 }
 
-lab = int(os.environ.get('LAB', 9))
+lab = int(os.environ.get('LAB', 10))
 
 if lab == 2:
     web_servers['files'].append('/usr/bin/nginx:::')
@@ -117,8 +113,6 @@ if lab >= 4:
     ]
 
     db_servers['files'].append('/etc/mysql/mysql.conf.d/override.cnf:::')  # 4.4
-    db_servers['mysql_databases'].append('agama')  # 4.6
-    db_servers['mysql_users'].append('agama@%')  # 4.7
     db_servers['process_sockets'].append('mysqld@tcp://0.0.0.0:3306')  # 4.4
     db_servers['services'].append('mysql')  # 4.3
 
@@ -148,10 +142,6 @@ if lab >= 6:
         '/etc/default/prometheus:127.0.0',  # 6.2
         '/etc/prometheus/prometheus.yml:192.168.4',  # 6.2
     ]
-    prometheus_servers['prometheus_metrics'] += [
-        'prometheus_ready 1',  # 6.3, 6.4
-        'prometheus_target_scrape_pool_targets{scrape_job="node"} 2',  # 6.2, 6.4
-    ]
     prometheus_servers['process_sockets'] += [
         'nginx@tcp://0.0.0.0:80',  # 6.3
         'prometheus@tcp://127.0.0.1:9090',  # 6.2
@@ -169,8 +159,6 @@ if lab >= 7:
 
     db_servers['files'].append('/var/lib/prometheus/.my.cnf:prometheus::400')  # 7.1
     db_servers['mysql_metrics'].append('mysql_up 1')  # 7.1
-    db_servers['mysql_users'].append('exporter@localhost')  # 7.1
-    db_servers['mysql_users_forbidden'].append('exporter@%')  # 7.1
     db_servers['process_sockets'].append('prometheus-mysqld-exporter@tcp://0.0.0.0:9104')  # 7.1
     db_servers['services'].append('prometheus-mysqld-exporter')  # 7.1
 
@@ -182,11 +170,6 @@ if lab >= 7:
     dns_servers['services'].append('prometheus-bind-exporter')  # 7.2
 
     prometheus_servers['nginx_metrics'].append('nginx_up 1')  # 7.3
-    prometheus_servers['prometheus_metrics'] += [
-        'prometheus_target_scrape_pool_targets{scrape_job="bind"} 1',  # 7.2
-        'prometheus_target_scrape_pool_targets{scrape_job="mysql"} 1',  # 7.1
-        'prometheus_target_scrape_pool_targets{scrape_job="nginx"} 2',  # 7.3
-    ]
     prometheus_servers['process_sockets'] += [
         'nginx@tcp://127.0.0.1:8080',  # 7.3
         'prometheus-nginx-exporter@tcp://0.0.0.0:9113',  # 7.3
@@ -213,11 +196,6 @@ if lab >= 8:
     all_servers['file_patterns_missing'].append('/etc/alloy/config.alloy:192.168.4')  # 8.2 (implicit)
     all_servers['users'].append('alloy:adm')  # 8.2
 
-    prometheus_servers['prometheus_metrics'] += [
-        'prometheus_target_scrape_pool_targets{scrape_job="loki"} 1',  # 8.4
-        'prometheus_target_scrape_pool_targets{scrape_job="alloy"} 2',  # 8.4
-    ]
-
 if 11 >= lab >= 8:
     web_servers['files'].append('/var/log/uwsgi/app/agama.log:root:adm:640')  # 8.3
 
@@ -226,6 +204,15 @@ if lab >= 9:
 
     all_servers['addresses_resolvable'].append('backup')  # 9.1
     all_servers['users'].append('backup:')  # 9.2
+
+if lab >= 10:
+    repo['files'] += [
+        'docs/backup_restore.md',  # 10.5
+        'roles/grafana/files/backups.json',  # 10.8
+        'roles/loki/templates/backup-cron.j2',  # 10.7
+        'roles/prometheus/templates/backup-cron.j2',  # 10.6
+        'roles/mysql/templates/backup-cron.j2',  # 10.3
+    ]
 
 
 #
@@ -254,6 +241,24 @@ def assert_file_exists(host, file_owner_group_mode):
         assert f.mode == mode, f'{file} has wrong permissions; expected: {mode:o}'
 
 
+def assert_mysql_user_exists(host, user, grants):
+    h = testinfra.get_host(f'ansible://{host}')
+
+    o = h.run("sudo mysql -Nse 'SELECT CONCAT(User, \"@\", Host) FROM mysql.user'").stdout
+    assert user in o, f'MySQL user {user} is missing on {host}'
+
+    o = h.run("sudo mysql -Nse 'SHOW GRANTS FOR %s'" % user.replace('%', '`%`')).stdout
+    grant_str = o.splitlines()[-1].split(' TO ')[0].replace('GRANT ', '')
+    assert grant_str == grants, f'MySQL user grants are wrong: {grant_str}, expected: {grants}'
+
+
+def assert_mysql_user_missing(host, user):
+    h = testinfra.get_host(f'ansible://{host}')
+
+    o = h.run("sudo mysql -Nse 'SELECT CONCAT(User, \"@\", Host) FROM mysql.user'").stdout
+    assert user not in o, f'MySQL user {user} is present on {host}'
+
+
 def assert_process_is_listening(host, process_socket):
     process, socket = process_socket.split('@')
     h = testinfra.get_host(f'ansible://{host}')
@@ -265,6 +270,15 @@ def assert_process_is_listening(host, process_socket):
         # If checking for local interface, also ensure the process is not listening on the public one
         socket = socket.replace('127.0.0.1', '0.0.0.0')
         assert not h.socket(socket).is_listening, f'{process} is still listening on {host} socket {socket}'
+
+
+def assert_prometheus_target_exists(host, target, count=1):
+    m = f'prometheus_target_scrape_pool_targets{{scrape_job="{target}"}} {count}'
+    assert_web_page_has_content(
+        host,
+        'http://localhost/prometheus/metrics',
+        m,
+    ), f'Prometheus target not found: {target} x {count}'
 
 
 def assert_service_is_running_and_enabled(host, service):
@@ -379,6 +393,15 @@ if lab >= 5:
         for a in addrs:
             assert h.addr(a).is_resolvable, f'Cannot resolve {a} from {host}'
 
+if lab >= 10:
+    @pytest.mark.parametrize('host', get_hosts('all'))
+    def test_duplicity_is_installed(host):
+        assert_file_exists(host, '/usr/bin/duplicity:root:root:755')  # 10.1
+
+    @pytest.mark.parametrize('host', get_hosts('all'))
+    def test_backup_restore_dir_exists(host):
+        assert_file_exists(host, '/home/backup/restore:backup::700')  # 10.1
+
 
 #
 # DNS server tests
@@ -423,15 +446,48 @@ if lab >= 6:
         assert_process_is_listening(host, process_socket)
 
     @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
-    @pytest.mark.parametrize('metric', sorted(set(prometheus_servers['prometheus_metrics'])))
-    def test_prometheus_metric_exposed(host, metric):
-        assert_web_page_has_content(host, 'http://localhost/prometheus/metrics', metric)
+    def test_prometheus_ready(host):
+        assert_web_page_has_content(host, 'http://localhost/prometheus/metrics', 'prometheus_ready 1')  # 6.3, 6.4
+
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
+    def test_prometheus_target_node_exists(host):
+        assert_prometheus_target_exists(host, 'node', 2)  # 6.2, 6.4
 
 if lab >= 7:
     @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
     @pytest.mark.parametrize('metric', sorted(set(prometheus_servers['nginx_metrics'])))
     def test_prometheus_server_nginx_metric_exposed(host, metric):
         assert_web_page_has_content(host, 'http://localhost:9113/metrics', metric)
+
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
+    def test_prometheus_target_bind_exists(host):
+        assert_prometheus_target_exists(host, 'bind')  # 7.2
+
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
+    def test_prometheus_target_mysql_exists(host):
+        assert_prometheus_target_exists(host, 'mysql')  # 7.1
+
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
+    def test_prometheus_target_nginx_exists(host):
+        assert_prometheus_target_exists(host, 'nginx', 2)  # 7.3
+
+if lab >= 8:
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
+    def test_prometheus_target_alloy_exists(host):
+        assert_prometheus_target_exists(host, 'alloy', 2)  # 8.4
+
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
+    def test_prometheus_target_loki_exists(host):
+        assert_prometheus_target_exists(host, 'loki')  # 8.4
+
+if lab >= 10:
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
+    def test_prometheus_backup_cron_exists(host):
+        assert_file_exists(host, '/etc/cron.d/prometheus-backup:root:root:644')  # 10.6
+
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
+    def test_prometheus_target_backup_exists(host):
+        assert_prometheus_target_exists(host, 'backup')  # 10.8
 
 
 #
@@ -450,6 +506,15 @@ if lab >= 8:
     @pytest.mark.parametrize('host', get_hosts('loki_servers'))
     def test_loki_html_content(host):
         assert_web_page_has_content(host, 'http://localhost:3100/ready', 'ready')  # 8.1
+
+if lab >= 10:
+    @pytest.mark.parametrize('host', get_hosts('loki_servers'))
+    def test_loki_backup_dir_exists(host):
+        assert_file_exists(host, '/home/backup/loki:backup::700')  # 10.1
+
+    @pytest.mark.parametrize('host', get_hosts('loki_servers'))
+    def test_loki_backup_cron_exists(host):
+        assert_file_exists(host, '/etc/cron.d/loki-backup:root:root:644')  # 10.6
 
 
 #
@@ -497,37 +562,43 @@ if lab >= 4:
         assert_process_is_listening(host, process_socket)
 
     @pytest.mark.parametrize('host', get_hosts('db_servers'))
-    @pytest.mark.parametrize('database', sorted(set(db_servers['mysql_databases'])))
-    def test_mysql_database_exists(host, database):
-        cmd = "sudo mysql -Nse 'SHOW DATABASES'"
-        r = testinfra.get_host(f'ansible://{host}').run(cmd)
-        assert database in r.stdout, f'MySQL database {database} is missing on {host}'
+    def test_mysql_database_agama_exists(host):
+        h = testinfra.get_host(f'ansible://{host}')
+        o = h.run("sudo mysql -Nse 'SHOW DATABASES'").stdout
+        assert 'agama' in o, f'MySQL database agama is missing on {host}'  # 4.6
 
     @pytest.mark.parametrize('host', get_hosts('db_servers'))
-    @pytest.mark.parametrize('user', sorted(set(db_servers['mysql_users'])))
-    def test_mysql_user_exists(host, user):
-        h = testinfra.get_host(f'ansible://{host}')
-
-        r = h.run("sudo mysql -Nse 'SELECT CONCAT(User, \"@\", Host) FROM mysql.user'")
-        assert user in r.stdout, f'MySQL user {user} is missing on {host}'
-
-        expected_user_grants = {
-            'agama@%': 'ALL PRIVILEGES ON `agama`.*',  # 4.7
-            'exporter@localhost': 'SELECT, PROCESS, REPLICATION CLIENT ON *.*',  # 7.1
-        }
-
-        r = h.run("sudo mysql -Nse 'SHOW GRANTS FOR %s'" % user.replace('%', '`%`'))
-        grant_str = r.stdout.splitlines()[-1].split(' TO ')[0].replace('GRANT ', '')
-        assert grant_str == expected_user_grants[user], ' '.join([
-            f'MySQL user grants are wrong: {grant_str},',
-            f"expected: {expected_user_grants[user]}",
-        ])
+    def test_mysql_user_agama_exists(host):
+        assert_mysql_user_exists(host, 'agama@%', 'ALL PRIVILEGES ON `agama`.*')  # 4.7
 
 if lab >= 7:
+    @pytest.mark.parametrize('host', get_hosts('db_servers'))
+    def test_mysql_user_exporter_exists(host):
+        assert_mysql_user_exists(host, 'exporter@localhost', 'SELECT, PROCESS, REPLICATION CLIENT ON *.*')  # 7.1
+        assert_mysql_user_missing(host, 'exporter@%')
+
     @pytest.mark.parametrize('host', get_hosts('db_servers'))
     @pytest.mark.parametrize('metric', sorted(set(db_servers['mysql_metrics'])))
     def test_mysql_metric_exposed(host, metric):
         assert_web_page_has_content(host, 'http://localhost:9104/metrics', metric)
+
+if lab >= 10:
+    @pytest.mark.parametrize('host', get_hosts('db_servers'))
+    def test_db_server_backup_dir_exists(host):
+        assert_file_exists(host, '/home/backup/mysql:backup::700')  # 10.1
+
+    @pytest.mark.parametrize('host', get_hosts('db_servers'))
+    def test_mysql_user_backup_exists(host):
+        assert_mysql_user_exists(host, 'backup@localhost', 'SELECT, LOCK TABLES ON `agama`.*')  # 10.2
+        assert_mysql_user_missing(host, 'backup@%')
+
+    @pytest.mark.parametrize('host', get_hosts('db_servers'))
+    def test_mysql_user_backup_config_exists(host):
+        assert_file_exists(host, '/home/backup/.my.cnf:backup::400')  # 10.2
+
+    @pytest.mark.parametrize('host', get_hosts('db_servers'))
+    def test_mysql_backup_cron_exists(host):
+        assert_file_exists(host, '/etc/cron.d/mysql-backup:root:root:644')  # 10.3
 
 
 #
