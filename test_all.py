@@ -70,7 +70,7 @@ web_servers = {
     'services': [],
 }
 
-lab = int(os.environ.get('LAB', 10))
+lab = int(os.environ.get('LAB', 11))
 
 if lab == 2:
     web_servers['files'].append('/usr/bin/nginx:::')
@@ -214,6 +214,11 @@ if lab >= 10:
         'roles/mysql/templates/backup-cron.j2',  # 10.3
     ]
 
+if lab >= 11:
+    repo['files'] += [
+        'roles/grafana/files/mysql.json',  # 11.1
+    ]
+
 
 #
 # Helper functions
@@ -300,7 +305,7 @@ def assert_user_exists(host, user_groups):
 
 def assert_web_page_has_content(host, url, content):
     r = testinfra.get_host(f'ansible://{host}').run(f'curl -Ls {url}')
-    assert content in r.stdout, f'Required content is not found on {host} -> {url}'
+    assert content in r.stdout, f"Required content '{content}' is not found on {host} -> {url}"
 
 
 def cleanup():
@@ -465,7 +470,7 @@ if lab >= 7:
 
     @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
     def test_prometheus_target_mysql_exists(host):
-        assert_prometheus_target_exists(host, 'mysql')  # 7.1
+        assert_prometheus_target_exists(host, 'mysql', 1 if lab < 11 else 2)  # 7.1
 
     @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
     def test_prometheus_target_nginx_exists(host):
@@ -599,6 +604,11 @@ if lab >= 10:
     @pytest.mark.parametrize('host', get_hosts('db_servers'))
     def test_mysql_backup_cron_exists(host):
         assert_file_exists(host, '/etc/cron.d/mysql-backup:root:root:644')  # 10.3
+
+if lab >= 11:
+    @pytest.mark.parametrize('host', get_hosts('db_servers'))
+    def test_mysql_user_replication_exists(host):
+        assert_mysql_user_exists(host, 'replication@%', 'REPLICATION SLAVE ON *.*')  # 11.2
 
 
 #
