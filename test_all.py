@@ -26,7 +26,6 @@ all_servers = {
         '__my_vms__',  # 5.6
         'taltech.ee',  # 5.6
     ],
-    'file_patterns_missing': [],
     'files': [
       '/home/backup/.ssh/id_rsa.pub:::',  # 9.2
       '/home/backup/.ssh/known_hosts:backup:backup:644',  # 9.3
@@ -70,7 +69,7 @@ web_servers = {
     'services': [],
 }
 
-lab = int(os.environ.get('LAB', 11))
+lab = int(os.environ.get('LAB', 12))
 
 if lab == 2:
     web_servers['files'].append('/usr/bin/nginx:::')
@@ -122,11 +121,10 @@ if 11 >= lab >= 4:
 if lab >= 5:
     repo['files'].append('roles/bind/tasks/main.yaml')  # 5.2
 
-    all_servers['services_stopped'].append('systemd-resolved')  # 5.6
-
     dns_servers['process_sockets'].append('named@tcp://__ip__:53')  # 5.2
     dns_servers['services'].append('bind9')  # 5.2
 
+if 11 >= lab >= 5:
     web_servers['file_patterns_missing'].append('/etc/uwsgi/apps-enabled/agama.ini:192.168.4')  # 5.7
 
 if lab >= 6:
@@ -193,7 +191,6 @@ if lab >= 8:
         'roles/loki/tasks/main.yaml',  # 8.1
     ]
 
-    all_servers['file_patterns_missing'].append('/etc/alloy/config.alloy:192.168.4')  # 8.2 (implicit)
     all_servers['users'].append('alloy:adm')  # 8.2
 
 if 11 >= lab >= 8:
@@ -215,9 +212,21 @@ if lab >= 10:
     ]
 
 if lab >= 11:
-    repo['files'] += [
-        'roles/grafana/files/mysql.json',  # 11.1
+    repo['files'].append('roles/grafana/files/mysql.json')  # 11.1
+
+if lab >= 12:
+    repo['files'].append('roles/docker/tasks/main.yaml')  # 12.1
+
+    grafana_servers['files'] += [
+        '/opt/grafana/grafana.ini:472:root:400',  # 12.4
+        '/opt/grafana/provisioning/dashboards/default.yaml:::',  # 12.3
+        '/opt/grafana/provisioning/dashboards/backups.json:::',  # 12.3
+        '/opt/grafana/provisioning/dashboards/main.json:::',  # 12.3
+        '/opt/grafana/provisioning/dashboards/mysql.json:::',  # 12.3
+        '/opt/grafana/provisioning/datasources/default.yaml:::',  # 12.3
     ]
+
+    web_servers['files'].append('/opt/agama/Dockerfile:::')  # 12.6
 
 
 #
@@ -228,6 +237,11 @@ def assert_file_does_not_contain(host, file_pattern):
     file, pattern = file_pattern.split(':')
     f = testinfra.get_host(f'ansible://{host}').file(file)
     assert not f.contains(pattern), f'{f} contains {pattern}'
+
+
+def assert_file_does_not_exist(host, file):
+    f = testinfra.get_host(f'ansible://{host}').file(file)
+    assert not f.exists, f'{file} exists on {host}'
 
 
 def assert_file_exists(host, file_owner_group_mode):
@@ -291,6 +305,12 @@ def assert_service_is_running_and_enabled(host, service):
     assert s.exists, f'{service} is not installed on {host}'
     assert s.is_running, f'{service} is not running on {host}'
     assert s.is_enabled, f'{service} is not enabled on {host}'
+
+
+def assert_service_is_stopped_and_disabled(host, service):
+    s = testinfra.get_host(f'ansible://{host}').service(service)
+    assert not s.is_running, f'{service} is still running on {host}'
+    assert not s.is_enabled, f'{service} is still enabled on {host}'
 
 
 def assert_user_exists(host, user_groups):
@@ -366,6 +386,12 @@ if lab >= 6:
 
 if lab >= 8:
     @pytest.mark.parametrize('host', get_hosts('all'))
+    def test_alloy_config(host):
+        assert_file_does_not_contain(host, '/etc/alloy/config.alloy:192.168.4')  # 8.2 (implicit)
+        if lab >= 12:
+            assert_file_does_not_contain(host, '/etc/alloy/config.alloy:uwsgi')  # 12.7
+
+    @pytest.mark.parametrize('host', get_hosts('all'))
     def test_alloy_is_running_and_enabled(host):
         assert_service_is_running_and_enabled(host, 'alloy')  # 8.2
 
@@ -380,11 +406,8 @@ if lab >= 8:
 
 if lab >= 5:
     @pytest.mark.parametrize('host', get_hosts('all'))
-    @pytest.mark.parametrize('service', sorted(set(all_servers['services_stopped'])))
-    def test_service_is_stopped_and_disabled(host, service):
-        s = testinfra.get_host(f'ansible://{host}').service(service)
-        assert not s.is_running, f'{service} is still running on {host}'
-        assert not s.is_enabled, f'{service} is still enabled on {host}'
+    def test_systemd_resolved_is_stopped_and_disabled(host):
+        assert_service_is_stopped_and_disabled(host, 'systemd-resolved')  # 5.6
 
     @pytest.mark.parametrize('host', get_hosts('all'))
     @pytest.mark.parametrize('addr', sorted(set(all_servers['addresses_resolvable'])))
@@ -406,6 +429,11 @@ if lab >= 10:
     @pytest.mark.parametrize('host', get_hosts('all'))
     def test_backup_restore_dir_exists(host):
         assert_file_exists(host, '/home/backup/restore:backup::700')  # 10.1
+
+if lab >= 12:
+    @pytest.mark.parametrize('host', sorted(set(get_hosts('grafana_servers') + get_hosts('web_servers'))))
+    def test_docker_is_running_and_enabled(host):
+        assert_service_is_running_and_enabled(host, 'docker')  # 12.1, 12.6
 
 
 #
@@ -532,6 +560,7 @@ if lab >= 7:
     def test_grafana_file_exists(host, file_owner_group_mode):
         assert_file_exists(host, file_owner_group_mode)
 
+if 11 >= lab >= 7:
     @pytest.mark.parametrize('host', get_hosts('grafana_servers'))
     def test_grafana_is_running_and_enabled(host):
         assert_service_is_running_and_enabled(host, 'grafana-server')  # 7.4
@@ -541,6 +570,14 @@ if lab >= 7:
         # Need to use 127.0.0.1 in the Grafana configuration to bind to local interface
         assert_process_is_listening(host, 'grafana-server@tcp://0.0.0.0:3000')  # 7.4
 
+if lab >= 12:
+    @pytest.mark.parametrize('host', get_hosts('grafana_servers'))
+    def test_grafana_container_is_listening(host):
+        assert_file_does_not_exist(host, '/etc/grafana')  # 12.2
+        # Need to use 127.0.0.1 in the Docker container configuration to bind to local interface
+        assert_process_is_listening(host, 'docker-proxy@tcp://0.0.0.0:3001')  # 12.5
+
+if lab >= 7:
     @pytest.mark.parametrize('host', get_hosts('grafana_servers'))
     def test_grafana_html_content(host):
         assert_web_page_has_content(host, 'http://localhost/grafana', '<title>Grafana')  # 7.5
@@ -636,7 +673,7 @@ if lab >= 2:
     def test_web_server_html_content(host, content):
         assert_web_page_has_content(host, 'http://localhost', content)
 
-if lab >= 5:
+if 11 >= lab >= 5:
     @pytest.mark.parametrize('host', get_hosts('web_servers'))
     @pytest.mark.parametrize('file_pattern', sorted(set(web_servers['file_patterns_missing'])))
     def test_web_server_file_does_not_contain(host, file_pattern):
@@ -647,6 +684,13 @@ if lab >= 7:
     @pytest.mark.parametrize('metric', sorted(set(web_servers['nginx_metrics'])))
     def test_web_server_nginx_metric_exposed(host, metric):
         assert_web_page_has_content(host, 'http://localhost:9113/metrics', metric)
+
+if lab >= 12:
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_agama_container_is_listening(host):
+        assert_file_does_not_exist(host, '/etc/uwsgi')  # 12.6
+        # Need to use 127.0.0.1 in the Docker container configuration to bind to local interface
+        assert_process_is_listening(host, 'docker-proxy@tcp://0.0.0.0:8001')  # 12.6
 
 
 #
