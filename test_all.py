@@ -30,9 +30,6 @@ all_servers = {
       '/home/backup/.ssh/id_rsa.pub:::',  # 9.2
       '/home/backup/.ssh/known_hosts:backup:backup:644',  # 9.3
     ],
-    'process_sockets': [],
-    'services': [],
-    'services_stopped': [],
     'users': [],
 }
 
@@ -69,7 +66,7 @@ web_servers = {
     'services': [],
 }
 
-lab = int(os.environ.get('LAB', 12))
+lab = int(os.environ.get('LAB', 13))
 
 if lab == 2:
     web_servers['files'].append('/usr/bin/nginx:::')
@@ -77,10 +74,6 @@ if lab == 2:
 
 if lab >= 2:
     repo['files'].append('roles/nginx/tasks/main.yaml')  # 2.4
-
-if 13 >= lab >= 2:
-    web_servers['process_sockets'].append('nginx@tcp://0.0.0.0:80')  # 2.4
-    web_servers['services'].append('nginx')  # 2.4
 
 if lab == 3:
     repo['files'] += [
@@ -93,17 +86,14 @@ if lab == 3:
 if lab >= 3:
     repo['files'].append('roles/agama/tasks/main.yaml')  # 3.2
 
-    web_servers['files'] += [
-        '/etc/nginx/sites-enabled/default:root:root:644',  # 3.5
-        '/opt/agama/agama.py:::',  # 3.2
-    ]
+    web_servers['files'].append('/opt/agama/agama.py:::')  # 3.2
     web_servers['html_patterns'].append('v0.3 running on')  # 3.5
 
 if 11 >= lab >= 3:
     repo['files'].append('roles/uwsgi/tasks/main.yaml')  # 3.3
 
-    web_servers['process_sockets'].append('uwsgi@tcp://127.0.0.1:5000')  # 3.3
-    web_servers['services'].append('uwsgi')  # 3.4
+if 12 >= lab >= 3:
+    web_servers['files'].append('/etc/nginx/sites-enabled/default:root:root:644')  # 3.5
 
 if lab >= 4:
     repo['files'] += [
@@ -132,9 +122,6 @@ if lab >= 6:
         'docs/prom_queries.txt',  # 6.5
         'roles/prometheus/tasks/main.yaml',  # 6.2
     ]
-
-    all_servers['process_sockets'].append('prometheus-node-exporter@tcp://0.0.0.0:9100')  # 6.1
-    all_servers['services'].append('prometheus-node-exporter')  # 6.1
 
     prometheus_servers['file_patterns_missing'] += [
         '/etc/default/prometheus:127.0.0',  # 6.2
@@ -176,14 +163,6 @@ if lab >= 7:
 
 if 11 >= lab >= 7:
     grafana_servers['files'].append('/etc/grafana/grafana.ini:root:grafana:640')  # 7.4
-
-if 13 >= lab >= 7:
-    web_servers['nginx_metrics'].append('nginx_up 1')  # 7.3
-    web_servers['process_sockets'] += [
-        'nginx@tcp://127.0.0.1:8080',  # 7.3
-        'prometheus-nginx-exporter@tcp://0.0.0.0:9113',  # 7.3
-    ]
-    web_servers['services'].append('prometheus-nginx-exporter')  # 7.3
 
 if lab >= 8:
     repo['files'] += [
@@ -227,6 +206,12 @@ if lab >= 12:
     ]
 
     web_servers['files'].append('/opt/agama/Dockerfile:::')  # 12.6
+
+if lab >= 13:
+    repo['files'] += [
+        'roles/haproxy/tasks/main.yaml',
+        'roles/keepalived/tasks/main.yaml',
+    ]
 
 
 #
@@ -367,22 +352,31 @@ def test_local_repo_file_exists(file):
 # Any server tests
 #
 
-if lab >= 9:
+if lab >= 5:
     @pytest.mark.parametrize('host', get_hosts('all'))
-    @pytest.mark.parametrize('file_owner_group_mode', sorted(set(all_servers['files'])))
-    def test_file_exists(host, file_owner_group_mode):
-        assert_file_exists(host, file_owner_group_mode)
+    def test_systemd_resolved_is_stopped_and_disabled(host):
+        assert_service_is_stopped_and_disabled(host, 'systemd-resolved')  # 5.6
+
+    @pytest.mark.parametrize('host', get_hosts('all'))
+    @pytest.mark.parametrize('addr', sorted(set(all_servers['addresses_resolvable'])))
+    def test_host_is_resolvable(host, addr):
+        h = testinfra.get_host(f'ansible://{host}')
+        if addr == '__my_vms__':
+            addrs = set(get_hosts('all'))
+        else:
+            addrs = [addr]
+
+        for a in addrs:
+            assert h.addr(a).is_resolvable, f'Cannot resolve {a} from {host}'
 
 if lab >= 6:
     @pytest.mark.parametrize('host', get_hosts('all'))
-    @pytest.mark.parametrize('service', sorted(set(all_servers['services'])))
-    def test_service_is_running_and_enabled(host, service):
-        assert_service_is_running_and_enabled(host, service)
+    def test_node_exporter_is_running_and_enabled(host):
+        assert_service_is_running_and_enabled(host, 'prometheus-node-exporter')  # 6.1
 
     @pytest.mark.parametrize('host', get_hosts('all'))
-    @pytest.mark.parametrize('process_socket', sorted(set(all_servers['process_sockets'])))
-    def test_service_is_listening(host, process_socket):
-        assert_process_is_listening(host, process_socket)
+    def test_node_exporter_is_listening(host):
+        assert_process_is_listening(host, 'prometheus-node-exporter@tcp://0.0.0.0:9100')  # 6.1
 
 if lab >= 8:
     @pytest.mark.parametrize('host', get_hosts('all'))
@@ -404,22 +398,11 @@ if lab >= 8:
     def test_user_exists(host, user_groups):
         assert_user_exists(host, user_groups)
 
-if lab >= 5:
+if lab >= 9:
     @pytest.mark.parametrize('host', get_hosts('all'))
-    def test_systemd_resolved_is_stopped_and_disabled(host):
-        assert_service_is_stopped_and_disabled(host, 'systemd-resolved')  # 5.6
-
-    @pytest.mark.parametrize('host', get_hosts('all'))
-    @pytest.mark.parametrize('addr', sorted(set(all_servers['addresses_resolvable'])))
-    def test_host_is_resolvable(host, addr):
-        h = testinfra.get_host(f'ansible://{host}')
-        if addr == '__my_vms__':
-            addrs = set(get_hosts('all'))
-        else:
-            addrs = [addr]
-
-        for a in addrs:
-            assert h.addr(a).is_resolvable, f'Cannot resolve {a} from {host}'
+    @pytest.mark.parametrize('file_owner_group_mode', sorted(set(all_servers['files'])))
+    def test_file_exists(host, file_owner_group_mode):
+        assert_file_exists(host, file_owner_group_mode)
 
 if lab >= 10:
     @pytest.mark.parametrize('host', get_hosts('all'))
@@ -521,6 +504,15 @@ if lab >= 10:
     @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
     def test_prometheus_target_backup_exists(host):
         assert_prometheus_target_exists(host, 'backup')  # 10.8
+
+if lab >= 13:
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
+    def test_prometheus_target_haproxy_exists(host):
+        assert_prometheus_target_exists(host, 'haproxy', 2)  # 13.4
+
+    @pytest.mark.parametrize('host', get_hosts('prometheus_servers'))
+    def test_prometheus_target_keepalived_exists(host):
+        assert_prometheus_target_exists(host, 'keepalived', 2)  # 13.5
 
 
 #
@@ -658,16 +650,25 @@ if lab >= 2:
     def test_web_server_file_exists(host, file_owner_group_mode):
         assert_file_exists(host, file_owner_group_mode)
 
+if 12 >= lab >= 2:
     @pytest.mark.parametrize('host', get_hosts('web_servers'))
-    @pytest.mark.parametrize('service', sorted(set(web_servers['services'])))
-    def test_web_service_is_running_and_enabled(host, service):
-        assert_service_is_running_and_enabled(host, service)
+    def test_nginx_is_running_and_enabled(host):
+        assert_service_is_running_and_enabled(host, 'nginx')  # 2.4
 
     @pytest.mark.parametrize('host', get_hosts('web_servers'))
-    @pytest.mark.parametrize('process_socket', sorted(set(web_servers['process_sockets'])))
-    def test_web_service_is_listening(host, process_socket):
-        assert_process_is_listening(host, process_socket)
+    def test_nginx_is_listening(host):
+        assert_process_is_listening(host, 'nginx@tcp://0.0.0.0:80')  # 2.4
 
+if 11 >= lab >= 3:
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_uwsgi_is_running_and_enabled(host):
+        assert_service_is_running_and_enabled(host, 'uwsgi')  # 3.4
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_uwsgi_is_listening(host):
+        assert_process_is_listening(host, 'uwsgi@tcp://127.0.0.1:5000')  # 3.3
+
+if lab >= 2:
     @pytest.mark.parametrize('host', get_hosts('web_servers'))
     @pytest.mark.parametrize('content', sorted(set(web_servers['html_patterns'])))
     def test_web_server_html_content(host, content):
@@ -679,11 +680,22 @@ if 11 >= lab >= 5:
     def test_web_server_file_does_not_contain(host, file_pattern):
         assert_file_does_not_contain(host, file_pattern)
 
-if lab >= 7:
+if 12 >= lab >= 7:
     @pytest.mark.parametrize('host', get_hosts('web_servers'))
-    @pytest.mark.parametrize('metric', sorted(set(web_servers['nginx_metrics'])))
-    def test_web_server_nginx_metric_exposed(host, metric):
-        assert_web_page_has_content(host, 'http://localhost:9113/metrics', metric)
+    def test_nginx_status_is_exposed(host):
+        assert_process_is_listening(host, 'nginx@tcp://127.0.0.1:8080')  # 7.3
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_nginx_exporter_is_running_and_enabled(host):
+        assert_service_is_running_and_enabled(host, 'prometheus-nginx-exporter')  # 7.3
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_nginx_exporter_is_listening(host):
+        assert_process_is_listening(host, 'prometheus-nginx-exporter@tcp://0.0.0.0:9113')  # 7.3
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_nginx_up_metric_is_1(host):
+        assert_web_page_has_content(host, 'http://localhost:9113/metrics', 'nginx_up 1')  # 7.3
 
 if lab >= 12:
     @pytest.mark.parametrize('host', get_hosts('web_servers'))
@@ -691,6 +703,54 @@ if lab >= 12:
         assert_file_does_not_exist(host, '/etc/uwsgi')  # 12.6
         # Need to use 127.0.0.1 in the Docker container configuration to bind to local interface
         assert_process_is_listening(host, 'docker-proxy@tcp://0.0.0.0:8001')  # 12.6
+        if lab >= 13:
+            assert_process_is_listening(host, 'docker-proxy@tcp://0.0.0.0:8002')  # 13.1
+
+if lab >= 13:
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_haproxy_config(host):
+        assert_file_does_not_contain(host, '/etc/haproxy/haproxy.cfg:127.0.0.')  # 13.3
+        assert_file_does_not_contain(host, '/etc/haproxy/haproxy.cfg:192.168.')  # 13.3
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_haproxy_is_running_and_enabled(host):
+        assert_service_is_running_and_enabled(host, 'haproxy')  # 13.3
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_haproxy_is_listening(host):
+        assert_process_is_listening(host, 'haproxy@tcp://0.0.0.0:88')  # 13.3
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_haproxy_stats_are_exposed(host):
+        assert_process_is_listening(host, 'haproxy@tcp://127.0.0.1:8088')  # 13.4
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_haproxy_exporter_is_running_and_enabled(host):
+        assert_service_is_running_and_enabled(host, 'prometheus-haproxy-exporter')  # 13.4
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_haproxy_exporter_is_listening(host):
+        assert_process_is_listening(host, 'prometheus-haproxy-exporter@tcp://0.0.0.0:9101')  # 13.4
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_haproxy_up_metric_is_1(host):
+        assert_web_page_has_content(host, 'http://localhost:9101/metrics', 'haproxy_up 1')  # 13.4
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_keepalived_is_running_and_enabled(host):
+        assert_service_is_running_and_enabled(host, 'keepalived')  # 13.2
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_keepalived_exporter_is_running_and_enabled(host):
+        assert_service_is_running_and_enabled(host, 'prometheus-keepalived-exporter')  # 13.5
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_keepalived_exporter_is_listening(host):
+        assert_process_is_listening(host, 'prometheus-keepalived-exporter@tcp://0.0.0.0:9165')  # 13.5
+
+    @pytest.mark.parametrize('host', get_hosts('web_servers'))
+    def test_keepalived_up_metric_is_1(host):
+        assert_web_page_has_content(host, 'http://localhost:9165/metrics', 'keepalived_up 1')  # 13.5
 
 
 #
